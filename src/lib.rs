@@ -1,16 +1,22 @@
-use log::*;
-use screeps_arena::{
-    prelude::*,
-    game,
-    constants::{prototypes, Part},
-};
+use common::*;
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 
 mod logging;
+pub mod swamp;
 
-fn setup() {
-    logging::setup_logging(logging::Info);
+//#[cfg(feature = "arena-spawn-and-swamp")]
+use swamp as mode;
+
+mod common {
+    pub use dynamic_plan_tree::*;
+    pub use log::*;
+    pub use screeps_arena::{game, prelude::*};
 }
+
+static PLAN: Lazy<Mutex<Plan<mode::PlanConfig>>> =
+    Lazy::new(|| Mutex::new(Plan::new(mode::EntryBehaviour.into(), "root", 1, true)));
 
 // add wasm_bindgen to any function you would like to expose for call from js
 // to use a reserved name as a function name, use `js_name`:
@@ -19,41 +25,10 @@ pub fn tick() {
     let tick = game::utils::get_ticks();
 
     if tick == 1 {
-        setup();
+        logging::setup_logging(logging::Info);
+        let info = game::arena_info();
+        warn!("arena_info: {:?}", info);
     }
-    warn!("hello arena! {}", tick);
 
-    let info = game::arena_info();
-    warn!("arena_info: {:?}", info);
-
-    // strategy for spawn and swamp arena, which will conditionally compile in
-    // only when this feature is enabled for the crate
-    #[cfg(feature = "arena-spawn-and-swamp")]
-    {
-        let mut enemy_spawn = None;
-        let spawns = game::utils::get_objects_by_prototype(prototypes::STRUCTURE_SPAWN);
-        warn!("spawns {}", spawns.len());
-        for spawn in spawns {
-            if spawn.my().unwrap_or(false) {
-                spawn.spawn_creep(&[Part::Move, Part::Attack]);
-            } else {
-                enemy_spawn = Some(spawn);
-            }
-        }
-
-        let creeps = game::utils::get_objects_by_prototype(prototypes::CREEP);
-        warn!("creeps {}", creeps.len());
-        for creep in creeps {
-            if creep.my() {
-                match &enemy_spawn {
-                    Some(t) => {
-                        creep.move_to(t.as_ref(), None);
-                        creep.attack(t);
-                    }
-                    None => {}
-                }
-            }
-        }
-    }
-    
+    PLAN.lock().unwrap().run();
 }
