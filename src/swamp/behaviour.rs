@@ -1,33 +1,12 @@
 use crate::common::*;
 use dynamic_plan_tree::behaviour::*;
-use screeps_arena::{
+
+use std::collections::HashMap;
+
+pub use screeps_arena::{
     constants::{prototypes, Part},
-    Creep, GameObject, ReturnCode, StructureSpawn,
+    ResourceType, ReturnCode, StructureContainer, StructureSpawn,
 };
-
-use js_sys::JsString;
-use wasm_bindgen::JsCast;
-use wasm_bindgen::JsValue;
-
-fn get_id(obj: &GameObject) -> Option<JsValue> {
-    static mut ID_KEY: Option<JsValue> = None;
-    unsafe {
-        if let None = ID_KEY {
-            ID_KEY = Some(JsValue::from("id"));
-        }
-        js_sys::Reflect::get(obj, ID_KEY.as_ref().unwrap()).ok()
-    }
-}
-
-fn get_creep_id(creep: &Creep) -> Option<JsString> {
-    get_id(creep)
-        .and_then(|x| x.as_f64())
-        .map(|x| x.to_string().into())
-}
-
-fn get_by_id<T: JsCast>(id: &JsString) -> Option<T> {
-    game::utils::get_object_by_id(id).and_then(|x| x.dyn_into::<T>().ok())
-}
 
 #[enum_dispatch(Behaviour<C>)]
 #[derive(Serialize, Deserialize, FromAny)]
@@ -46,16 +25,15 @@ pub enum Behaviours<C: Config> {
     MaxUtilBehaviour,
 
     RootBehaviour,
+    HarvestBehaviour,
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct RootBehaviour {
     #[serde(skip)]
-    spawn: Option<JsString>,
+    my_spawn: Option<StructureSpawn>,
     #[serde(skip)]
-    enemy_spawn: Option<JsString>,
-    #[serde(skip)]
-    creeps: Vec<JsString>,
+    op_spawn: Option<StructureSpawn>,
 }
 
 impl<C: Config> Behaviour<C> for RootBehaviour {
@@ -63,38 +41,121 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
         None
     }
 
-    fn on_entry(&mut self, _plan: &mut Plan<C>) {
+    fn on_entry(&mut self, plan: &mut Plan<C>) {
         let spawns = game::utils::get_objects_by_prototype(prototypes::STRUCTURE_SPAWN);
-        self.spawn = spawns
-            .iter()
-            .find(|x| x.my().unwrap_or(false))
-            .map(|x| x.id());
-        self.enemy_spawn = spawns
-            .iter()
-            .find(|x| !x.my().unwrap_or(true))
-            .map(|x| x.id());
+        let (mut my, mut op): (Vec<_>, _) =
+            spawns.into_iter().partition(|x| x.my().unwrap_or(false));
+        self.my_spawn = my.pop();
+        self.op_spawn = op.pop();
+
+        plan.insert(Plan::new(
+            C::Behaviour::from_any(HarvestBehaviour::new(self.my_spawn.clone())).unwrap(),
+            "harvest",
+            1,
+            true,
+        ))
+        .enter(None);
     }
 
-    fn on_run(&mut self, _plan: &mut Plan<C>) {
-        if let Some(id) = &self.spawn {
-            let spawn = get_by_id::<StructureSpawn>(id).unwrap();
-            let _ = spawn.spawn_creep(&[Part::Move, Part::Attack]);
-        }
+    fn on_run(&mut self, plan: &mut Plan<C>) {
+        // get creeps
         let creeps = game::utils::get_objects_by_prototype(prototypes::CREEP);
-        let (my_creeps, _enemy_creeps): (Vec<_>, _) = creeps.into_iter().partition(|x| x.my());
+        let (my_creeps, _op_creeps): (Vec<_>, _) = creeps.into_iter().partition(|x| x.my());
 
-        if let Some(id) = &self.enemy_spawn {
-            let spawn = get_by_id::<StructureSpawn>(id).unwrap();
-            for creep in &my_creeps {
-                if let ReturnCode::Ok = creep.attack(&spawn) {
+        let (carry_creeps, my_creeps): (Vec<_>, _) = my_creeps
+            .into_iter()
+            .partition(|x| x.body().iter().find(|x| x.part() == Part::Carry).is_some());
+
+        let (attack_creeps, my_creeps): (Vec<_>, _) = my_creeps
+            .into_iter()
+            .partition(|x| x.body().iter().find(|x| x.part() == Part::Attack).is_some());
+        let _ = my_creeps;
+
+        // spawn creeps
+        if let Some(spawn) = &self.my_spawn {
+            if carry_creeps.len() < 3 {
+                let _ = spawn.spawn_creep(&[Part::Move, Part::Carry]);
+            } else {
+                let _ = spawn.spawn_creep(&[Part::Move, Part::Move, Part::Attack, Part::Attack]);
+            }
+        }
+
+        // send creeps to attack opponent
+        if let Some(spawn) = &self.op_spawn {
+            for creep in attack_creeps {
+                if let ReturnCode::Ok = creep.attack(spawn) {
                 } else {
                     creep.move_to(&spawn, None);
                 }
             }
         }
 
-        self.creeps = my_creeps.iter().filter_map(get_creep_id).collect();
-        debug!("{self:?}");
+        // send carry creeps to harvest plan
+        for creep in carry_creeps {
+            let harvest = plan
+                .get_mut("harvest")
+                .unwrap()
+                .behaviour
+                .as_any_mut()
+                .downcast_mut::<HarvestBehaviour>()
+                .unwrap();
+            harvest
+                .creeps
+                .entry(get_creep_id(&creep).unwrap().into())
+                .or_insert(creep);
+        }
+
+        //self.creeps = my_creeps.iter().filter_map(get_creep_id).collect();
+        // debug!("{self:?}");
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct HarvestBehaviour {
+    #[serde(skip)]
+    my_spawn: Option<StructureSpawn>,
+    #[serde(skip)]
+    creeps: HashMap<String, Creep>,
+}
+
+impl HarvestBehaviour {
+    fn new(my_spawn: Option<StructureSpawn>) -> Self {
+        Self {
+            my_spawn,
+            creeps: HashMap::new(),
+        }
+    }
+}
+
+impl<C: Config> Behaviour<C> for HarvestBehaviour {
+    fn status(&self, _plan: &Plan<C>) -> Option<bool> {
+        None
+    }
+
+    fn on_run(&mut self, _plan: &mut Plan<C>) {
+        let containers = game::utils::get_objects_by_prototype(prototypes::STRUCTURE_CONTAINER)
+            .iter()
+            .filter(|x| x.store().get(ResourceType::Energy).unwrap_or(0) > 20)
+            .collect::<Array>();
+
+        for (_id, creep) in &self.creeps {
+            if creep.store().get(ResourceType::Energy).unwrap() == 0 {
+                // harvest from containers
+                if let Some(closest) = creep.find_closest_by_path(&containers, None) {
+                    let closest = JsValue::from(closest).into();
+                    if let ReturnCode::Ok = creep.withdraw(&closest, ResourceType::Energy, None) {
+                    } else {
+                        creep.move_to(&closest, None);
+                    }
+                }
+            } else {
+                let spawn = self.my_spawn.as_ref().unwrap();
+                if let ReturnCode::Ok = creep.transfer(spawn, ResourceType::Energy, None) {
+                } else {
+                    creep.move_to(spawn, None);
+                }
+            }
+        }
     }
 }
 

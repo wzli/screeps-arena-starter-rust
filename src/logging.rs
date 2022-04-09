@@ -23,7 +23,7 @@ pub fn setup_logging(verbosity: log::LevelFilter) {
             out.finish(format_args!(
                 "({}) {}: {}",
                 record.level(),
-                record.target(),
+                "", //record.target(),
                 message
             ))
         })
