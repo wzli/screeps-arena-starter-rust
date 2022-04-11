@@ -25,7 +25,7 @@ mod common {
     pub fn get_id(obj: &GameObject) -> Option<JsValue> {
         static mut ID_KEY: Option<JsValue> = None;
         unsafe {
-            if let None = ID_KEY {
+            if ID_KEY.is_none() {
                 ID_KEY = Some(JsValue::from("id"));
             }
             js_sys::Reflect::get(obj, ID_KEY.as_ref()?).ok()

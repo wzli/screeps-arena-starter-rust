@@ -55,6 +55,9 @@ pub struct RootBehaviour {
     my_creeps: Vec<Creep>,
     #[serde(skip)]
     op_creeps: Vec<Creep>,
+
+    carry_parts: Vec<Part>,
+    attack_parts: Vec<Part>,
 }
 
 impl<C: Config> Behaviour<C> for RootBehaviour {
@@ -70,9 +73,14 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
         self.my_spawn = my.pop();
         self.op_spawn = op.pop();
 
+        self.carry_parts = gen_parts(&[(Part::Move, 5), (Part::Carry, 5)]);
+        self.attack_parts = gen_parts(&[(Part::Move, 5), (Part::Attack, 5)]);
+
         // create harvest plan
-        let mut harvest = HarvestBehaviour::default();
-        harvest.my_spawn = self.my_spawn.clone();
+        let harvest = HarvestBehaviour {
+            my_spawn: self.my_spawn.clone(),
+            ..HarvestBehaviour::default()
+        };
         plan.insert(Plan::new(
             C::Behaviour::from_any(harvest).unwrap(),
             "harvest",
@@ -81,8 +89,10 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
         ));
 
         // create attack plan
-        let mut attack = AttackBehaviour::default();
-        attack.op_spawn = self.op_spawn.clone();
+        let attack = AttackBehaviour {
+            op_spawn: self.op_spawn.clone(),
+            ..AttackBehaviour::default()
+        };
         plan.insert(Plan::new(
             C::Behaviour::from_any(attack).unwrap(),
             "attack",
@@ -99,11 +109,11 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
         // partition out my creeps with carry
         let (carry_creeps, my_creeps): (Vec<_>, _) = my_creeps
             .into_iter()
-            .partition(|x| x.body().iter().find(|x| x.part() == Part::Carry).is_some());
+            .partition(|x| x.body().iter().any(|x| x.part() == Part::Carry));
         // partition out my creeps with attack
         let (attack_creeps, my_creeps): (Vec<_>, _) = my_creeps
             .into_iter()
-            .partition(|x| x.body().iter().find(|x| x.part() == Part::Attack).is_some());
+            .partition(|x| x.body().iter().any(|x| x.part() == Part::Attack));
         // store other creeps
         self.my_creeps = my_creeps;
         self.op_creeps = op_creeps;
@@ -111,9 +121,9 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
         // spawn creeps
         if let Some(spawn) = &self.my_spawn {
             if carry_creeps.len() < 3 {
-                let _ = spawn.spawn_creep(&[Part::Move, Part::Carry]);
+                let _ = spawn.spawn_creep(&self.carry_parts);
             } else {
-                let _ = spawn.spawn_creep(&[Part::Move, Part::Move, Part::Attack, Part::Attack]);
+                let _ = spawn.spawn_creep(&self.attack_parts);
             }
         }
 
@@ -157,7 +167,7 @@ impl<C: Config> Behaviour<C> for HarvestBehaviour {
             .filter(|x| x.store().get(ResourceType::Energy).unwrap_or(0) > 20)
             .collect::<Array>();
 
-        for (_id, creep) in &self.creeps.0 {
+        for creep in self.creeps.0.values() {
             if creep.store().get(ResourceType::Energy).unwrap() == 0 {
                 // harvest from containers
                 if let Some(closest) = creep.find_closest_by_path(&containers, None) {
@@ -203,15 +213,22 @@ impl<C: Config> Behaviour<C> for AttackBehaviour {
     fn on_run(&mut self, _plan: &mut Plan<C>) {
         // send creeps to attack opponent
         if let Some(spawn) = &self.op_spawn {
-            for (_id, creep) in &self.creeps.0 {
+            for creep in self.creeps.0.values() {
                 if let ReturnCode::Ok = creep.attack(spawn) {
                 } else {
-                    creep.move_to(&spawn, None);
+                    creep.move_to(spawn, None);
                 }
             }
         }
-        info!("proof");
     }
+}
+
+pub fn gen_parts(parts_list: &[(Part, usize)]) -> Vec<Part> {
+    let mut v = Vec::new();
+    for (part, i) in parts_list {
+        v.extend(vec![part; *i]);
+    }
+    v
 }
 
 /*
