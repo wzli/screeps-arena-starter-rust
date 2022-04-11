@@ -3,8 +3,9 @@ use wasm_bindgen::prelude::*;
 
 // this needs to come before behaviour and predicate implementations
 pub fn enum_dispatch_trait() {
-    behaviour::behaviour_trait!();
-    predicate::predicate_trait!();
+    use dpt::*;
+    behaviour_trait!();
+    predicate_trait!();
 }
 
 mod logging;
@@ -14,7 +15,8 @@ pub mod swamp;
 use swamp as mode;
 
 mod common {
-    pub use dynamic_plan_tree::*;
+    pub use dpt::{enum_dispatch, Deserialize, FromAny, Serialize};
+    pub use dynamic_plan_tree as dpt;
     pub use log::*;
     pub use screeps_arena::{game, prelude::*, Creep, GameObject};
 
@@ -47,7 +49,7 @@ mod common {
     */
 }
 
-static mut PLAN: Option<Plan<mode::PlanConfig>> = None;
+static mut PLAN: Option<dpt::Plan<mode::Config>> = None;
 
 #[wasm_bindgen(js_name = loop)]
 pub fn tick() {
@@ -58,7 +60,7 @@ pub fn tick() {
                 logging::setup_logging(logging::Debug);
                 info!("{:?}", game::arena_info());
 
-                PLAN = Some(Plan::new(
+                PLAN = Some(dpt::Plan::new(
                     mode::behaviour::RootBehaviour::default().into(),
                     "root",
                     1,

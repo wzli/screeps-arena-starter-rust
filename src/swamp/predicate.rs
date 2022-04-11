@@ -1,4 +1,5 @@
-use dynamic_plan_tree::predicate::*;
+use crate::common::*;
+use dpt::predicate::*;
 
 #[enum_dispatch(Predicate)]
 #[derive(Serialize, Deserialize, FromAny)]

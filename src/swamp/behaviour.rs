@@ -1,5 +1,5 @@
 use crate::common::*;
-use dynamic_plan_tree::behaviour::*;
+use dpt::behaviour::*;
 
 use std::collections::HashMap;
 
@@ -11,8 +11,6 @@ pub use screeps_arena::{
 #[enum_dispatch(Behaviour<C>)]
 #[derive(Serialize, Deserialize, FromAny)]
 pub enum Behaviours<C: Config> {
-    DefaultBehaviour,
-
     AllSuccessStatus,
     AnySuccessStatus,
     EvaluateStatus(EvaluateStatus<C>),
@@ -53,8 +51,7 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
             "harvest",
             1,
             true,
-        ))
-        .enter(None);
+        ));
     }
 
     fn on_run(&mut self, plan: &mut Plan<C>) {
@@ -95,9 +92,7 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
             let harvest = plan
                 .get_mut("harvest")
                 .unwrap()
-                .behaviour
-                .as_any_mut()
-                .downcast_mut::<HarvestBehaviour>()
+                .cast_mut::<HarvestBehaviour>()
                 .unwrap();
             harvest
                 .creeps
