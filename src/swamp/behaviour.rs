@@ -8,6 +8,24 @@ pub use screeps_arena::{
     ResourceType, ReturnCode, StructureContainer, StructureSpawn,
 };
 
+trait HasCreeps: Sized + 'static {
+    fn creeps(&self) -> &Creeps;
+    fn creeps_mut(&mut self) -> &mut Creeps;
+
+    fn add_creep(plan: Option<&mut Plan<impl Config>>, creep: Creep) -> Option<&mut Creep> {
+        plan?.cast_mut::<Self>()?.creeps_mut().add_creep(creep)
+    }
+}
+
+#[derive(Default)]
+pub struct Creeps(pub HashMap<String, Creep>);
+
+impl Creeps {
+    pub fn add_creep(&mut self, creep: Creep) -> Option<&mut Creep> {
+        Some(self.0.entry(get_creep_id(&creep)?).or_insert(creep))
+    }
+}
+
 #[enum_dispatch(Behaviour<C>)]
 #[derive(Serialize, Deserialize, FromAny)]
 pub enum Behaviours<C: Config> {
@@ -24,6 +42,7 @@ pub enum Behaviours<C: Config> {
 
     RootBehaviour,
     HarvestBehaviour,
+    AttackBehaviour,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -32,6 +51,10 @@ pub struct RootBehaviour {
     my_spawn: Option<StructureSpawn>,
     #[serde(skip)]
     op_spawn: Option<StructureSpawn>,
+    #[serde(skip)]
+    my_creeps: Vec<Creep>,
+    #[serde(skip)]
+    op_creeps: Vec<Creep>,
 }
 
 impl<C: Config> Behaviour<C> for RootBehaviour {
@@ -40,33 +63,50 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
     }
 
     fn on_entry(&mut self, plan: &mut Plan<C>) {
+        // get spawns
         let spawns = game::utils::get_objects_by_prototype(prototypes::STRUCTURE_SPAWN);
         let (mut my, mut op): (Vec<_>, _) =
             spawns.into_iter().partition(|x| x.my().unwrap_or(false));
         self.my_spawn = my.pop();
         self.op_spawn = op.pop();
 
+        // create harvest plan
+        let mut harvest = HarvestBehaviour::default();
+        harvest.my_spawn = self.my_spawn.clone();
         plan.insert(Plan::new(
-            C::Behaviour::from_any(HarvestBehaviour::new(self.my_spawn.clone())).unwrap(),
+            C::Behaviour::from_any(harvest).unwrap(),
             "harvest",
+            1,
+            true,
+        ));
+
+        // create attack plan
+        let mut attack = AttackBehaviour::default();
+        attack.op_spawn = self.op_spawn.clone();
+        plan.insert(Plan::new(
+            C::Behaviour::from_any(attack).unwrap(),
+            "attack",
             1,
             true,
         ));
     }
 
-    fn on_run(&mut self, plan: &mut Plan<C>) {
-        // get creeps
+    fn on_pre_run(&mut self, plan: &mut Plan<C>) {
+        // get all creeps
         let creeps = game::utils::get_objects_by_prototype(prototypes::CREEP);
-        let (my_creeps, _op_creeps): (Vec<_>, _) = creeps.into_iter().partition(|x| x.my());
-
+        // partition out my creeps
+        let (my_creeps, op_creeps): (Vec<_>, _) = creeps.into_iter().partition(|x| x.my());
+        // partition out my creeps with carry
         let (carry_creeps, my_creeps): (Vec<_>, _) = my_creeps
             .into_iter()
             .partition(|x| x.body().iter().find(|x| x.part() == Part::Carry).is_some());
-
+        // partition out my creeps with attack
         let (attack_creeps, my_creeps): (Vec<_>, _) = my_creeps
             .into_iter()
             .partition(|x| x.body().iter().find(|x| x.part() == Part::Attack).is_some());
-        let _ = my_creeps;
+        // store other creeps
+        self.my_creeps = my_creeps;
+        self.op_creeps = op_creeps;
 
         // spawn creeps
         if let Some(spawn) = &self.my_spawn {
@@ -77,48 +117,31 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
             }
         }
 
-        // send creeps to attack opponent
-        if let Some(spawn) = &self.op_spawn {
-            for creep in attack_creeps {
-                if let ReturnCode::Ok = creep.attack(spawn) {
-                } else {
-                    creep.move_to(&spawn, None);
-                }
-            }
-        }
-
         // send carry creeps to harvest plan
         for creep in carry_creeps {
-            let harvest = plan
-                .get_mut("harvest")
-                .unwrap()
-                .cast_mut::<HarvestBehaviour>()
-                .unwrap();
-            harvest
-                .creeps
-                .entry(get_creep_id(&creep).unwrap().into())
-                .or_insert(creep);
+            HarvestBehaviour::add_creep(plan.get_mut("harvest"), creep).unwrap();
         }
-
-        //self.creeps = my_creeps.iter().filter_map(get_creep_id).collect();
-        // debug!("{self:?}");
+        // send attack creeps to attack plan
+        for creep in attack_creeps {
+            AttackBehaviour::add_creep(plan.get_mut("attack"), creep).unwrap();
+        }
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct HarvestBehaviour {
     #[serde(skip)]
     my_spawn: Option<StructureSpawn>,
     #[serde(skip)]
-    creeps: HashMap<String, Creep>,
+    creeps: Creeps,
 }
 
-impl HarvestBehaviour {
-    fn new(my_spawn: Option<StructureSpawn>) -> Self {
-        Self {
-            my_spawn,
-            creeps: HashMap::new(),
-        }
+impl HasCreeps for HarvestBehaviour {
+    fn creeps(&self) -> &Creeps {
+        &self.creeps
+    }
+    fn creeps_mut(&mut self) -> &mut Creeps {
+        &mut self.creeps
     }
 }
 
@@ -128,12 +151,13 @@ impl<C: Config> Behaviour<C> for HarvestBehaviour {
     }
 
     fn on_run(&mut self, _plan: &mut Plan<C>) {
+        // find all cointainers with energy
         let containers = game::utils::get_objects_by_prototype(prototypes::STRUCTURE_CONTAINER)
             .iter()
             .filter(|x| x.store().get(ResourceType::Energy).unwrap_or(0) > 20)
             .collect::<Array>();
 
-        for (_id, creep) in &self.creeps {
+        for (_id, creep) in &self.creeps.0 {
             if creep.store().get(ResourceType::Energy).unwrap() == 0 {
                 // harvest from containers
                 if let Some(closest) = creep.find_closest_by_path(&containers, None) {
@@ -154,6 +178,42 @@ impl<C: Config> Behaviour<C> for HarvestBehaviour {
     }
 }
 
+#[derive(Serialize, Deserialize, Default)]
+pub struct AttackBehaviour {
+    #[serde(skip)]
+    op_spawn: Option<StructureSpawn>,
+    #[serde(skip)]
+    creeps: Creeps,
+}
+
+impl HasCreeps for AttackBehaviour {
+    fn creeps(&self) -> &Creeps {
+        &self.creeps
+    }
+    fn creeps_mut(&mut self) -> &mut Creeps {
+        &mut self.creeps
+    }
+}
+
+impl<C: Config> Behaviour<C> for AttackBehaviour {
+    fn status(&self, _plan: &Plan<C>) -> Option<bool> {
+        None
+    }
+
+    fn on_run(&mut self, _plan: &mut Plan<C>) {
+        // send creeps to attack opponent
+        if let Some(spawn) = &self.op_spawn {
+            for (_id, creep) in &self.creeps.0 {
+                if let ReturnCode::Ok = creep.attack(spawn) {
+                } else {
+                    creep.move_to(&spawn, None);
+                }
+            }
+        }
+        info!("proof");
+    }
+}
+
 /*
 pub trait Behaviour<C: Config>: Send + Sized + 'static {
     fn status(&self, plan: &Plan<C>) -> Option<bool>;
@@ -162,6 +222,7 @@ pub trait Behaviour<C: Config>: Send + Sized + 'static {
     }
     fn on_entry(&mut self, _plan: &mut Plan<C>) {}
     fn on_exit(&mut self, _plan: &mut Plan<C>) {}
+    fn on_pre_run(&mut self, _plan: &mut Plan<C>) {}
     fn on_run(&mut self, _plan: &mut Plan<C>) {}
 
     fn as_any(&self) -> &dyn Any {
