@@ -172,16 +172,20 @@ impl<C: Config> Behaviour<C> for HarvestBehaviour {
                 // harvest from containers
                 if let Some(closest) = creep.find_closest_by_path(&containers, None) {
                     let closest = JsValue::from(closest).into();
-                    if let ReturnCode::Ok = creep.withdraw(&closest, ResourceType::Energy, None) {
-                    } else {
-                        creep.move_to(&closest, None);
+                    match creep.withdraw(&closest, ResourceType::Energy, None) {
+                        ReturnCode::NotInRange => {
+                            creep.move_to(&closest, None);
+                        }
+                        err => warn!("withdraw error {err:?}"),
                     }
                 }
             } else {
                 let spawn = self.my_spawn.as_ref().unwrap();
-                if let ReturnCode::Ok = creep.transfer(spawn, ResourceType::Energy, None) {
-                } else {
-                    creep.move_to(spawn, None);
+                match creep.transfer(spawn, ResourceType::Energy, None) {
+                    ReturnCode::NotInRange => {
+                        creep.move_to(spawn, None);
+                    }
+                    err => warn!("transfer error {err:?}"),
                 }
             }
         }
@@ -214,9 +218,11 @@ impl<C: Config> Behaviour<C> for AttackBehaviour {
         // send creeps to attack opponent
         if let Some(spawn) = &self.op_spawn {
             for creep in self.creeps.0.values() {
-                if let ReturnCode::Ok = creep.attack(spawn) {
-                } else {
-                    creep.move_to(spawn, None);
+                match creep.attack(spawn) {
+                    ReturnCode::NotInRange => {
+                        creep.move_to(spawn, None);
+                    }
+                    err => warn!("attack error {err:?}"),
                 }
             }
         }
