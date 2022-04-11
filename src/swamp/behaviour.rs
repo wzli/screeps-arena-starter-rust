@@ -172,23 +172,32 @@ impl<C: Config> Behaviour<C> for HarvestBehaviour {
                 // harvest from containers
                 if let Some(closest) = creep.find_closest_by_path(&containers, None) {
                     let closest = JsValue::from(closest).into();
-                    match creep.withdraw(&closest, ResourceType::Energy, None) {
-                        ReturnCode::NotInRange => {
-                            creep.move_to(&closest, None);
-                        }
-                        err => warn!("withdraw error {err:?}"),
-                    }
+                    ok_or_move_to(
+                        creep.withdraw(&closest, ResourceType::Energy, None),
+                        creep,
+                        &closest,
+                    );
                 }
             } else {
                 let spawn = self.my_spawn.as_ref().unwrap();
-                match creep.transfer(spawn, ResourceType::Energy, None) {
-                    ReturnCode::NotInRange => {
-                        creep.move_to(spawn, None);
-                    }
-                    err => warn!("transfer error {err:?}"),
-                }
+                ok_or_move_to(
+                    creep.transfer(spawn, ResourceType::Energy, None),
+                    creep,
+                    spawn,
+                );
             }
         }
+    }
+}
+
+fn ok_or_move_to(err: ReturnCode, creep: &Creep, target: &GameObject) {
+    match err {
+        ReturnCode::Ok => {}
+        ReturnCode::NotInRange => match creep.move_to(target, None) {
+            ReturnCode::Ok => {}
+            err => warn!(" error {err:?}"),
+        },
+        err => warn!("unexpected error {err:?}"),
     }
 }
 
@@ -218,23 +227,17 @@ impl<C: Config> Behaviour<C> for AttackBehaviour {
         // send creeps to attack opponent
         if let Some(spawn) = &self.op_spawn {
             for creep in self.creeps.0.values() {
-                match creep.attack(spawn) {
-                    ReturnCode::NotInRange => {
-                        creep.move_to(spawn, None);
-                    }
-                    err => warn!("attack error {err:?}"),
-                }
+                ok_or_move_to(creep.attack(spawn), creep, spawn);
             }
         }
     }
 }
 
 pub fn gen_parts(parts_list: &[(Part, usize)]) -> Vec<Part> {
-    let mut v = Vec::new();
-    for (part, i) in parts_list {
-        v.extend(vec![part; *i]);
-    }
-    v
+    parts_list
+        .iter()
+        .flat_map(|(part, n)| vec![*part; *n])
+        .collect()
 }
 
 /*
