@@ -5,7 +5,7 @@ pub use dynamic_plan_tree as dpt;
 pub use js_sys::{Array, JsString};
 pub use screeps_arena::{game, prelude::*, Creep, GameObject};
 pub use tracing::*;
-pub use wasm_bindgen::{JsCast, JsValue};
+pub use wasm_bindgen::{prelude::*, JsCast, JsValue};
 
 pub fn get_id(obj: &GameObject) -> Option<JsValue> {
     static mut ID_KEY: Option<JsValue> = None;

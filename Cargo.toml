@@ -32,8 +32,6 @@ lto = true
 wasm-opt = ["-O4"]
 
 [features]
-default = ["arena-spawn-and-swamp"]
-
 arena-capture-the-flag = ["screeps-arena-game-api/arena-capture-the-flag"]
 arena-spawn-and-swamp = ["screeps-arena-game-api/arena-spawn-and-swamp"]
 arena-collect-and-control = ["screeps-arena-game-api/arena-collect-and-control"]
