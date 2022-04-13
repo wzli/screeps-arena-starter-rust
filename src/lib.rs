@@ -1,4 +1,5 @@
 use common::*;
+pub use wasm_bindgen::prelude::*;
 
 // this needs to come before behaviour and predicate implementations
 pub fn enum_dispatch_trait() {

@@ -32,9 +32,9 @@ pub fn ok_or_move_to(err: ReturnCode, creep: &Creep, target: &GameObject) {
         ReturnCode::Ok => {}
         ReturnCode::NotInRange => match creep.move_to(target, None) {
             ReturnCode::Ok => {}
-            err => warn!(" error {err:?}"),
+            err => warn!(Error=?err, "Move"),
         },
-        err => warn!("unexpected error {err:?}"),
+        err => warn!(Error=?err, "Unexpected"),
     }
 }
 
