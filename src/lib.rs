@@ -52,6 +52,7 @@ pub fn tick() {
             Some(plan) => plan.run(),
             None => {
                 logging::setup_logging(logging::Debug);
+                std::panic::set_hook(Box::new(|info| error!("{info}")));
                 info!("{:?}", game::arena_info());
 
                 PLAN = Some(dpt::Plan::new(
