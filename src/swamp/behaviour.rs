@@ -3,11 +3,6 @@ use dpt::behaviour::*;
 
 use std::collections::HashMap;
 
-pub use screeps_arena::{
-    constants::{prototypes, Part},
-    ResourceType, ReturnCode, StructureContainer, StructureSpawn,
-};
-
 trait HasCreeps: Sized + 'static {
     fn creeps(&self) -> &Creeps;
     fn creeps_mut(&mut self) -> &mut Creeps;
@@ -90,7 +85,7 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
         self.attack_parts = gen_parts(&[(Part::Move, 5), (Part::Attack, 5)]);
 
         // get spawns
-        let spawns = game::utils::get_objects_by_prototype(prototypes::STRUCTURE_SPAWN);
+        let spawns = get_objects_by_prototype(prototypes::STRUCTURE_SPAWN);
         let (mut my, mut op): (Vec<_>, _) =
             spawns.into_iter().partition(|x| x.my().unwrap_or(false));
         self.my_spawn = my.pop();
@@ -131,7 +126,7 @@ impl<C: Config> Behaviour<C> for RootBehaviour {
 
     fn on_pre_run(&mut self, plan: &mut Plan<C>) {
         // get all creeps
-        let creeps = game::utils::get_objects_by_prototype(prototypes::CREEP);
+        let creeps = get_objects_by_prototype(prototypes::CREEP);
         // partition out my creeps
         let (my_creeps, op_creeps): (Vec<_>, _) = creeps.into_iter().partition(|x| x.my());
         self.my_creeps = my_creeps;
@@ -175,7 +170,7 @@ impl<C: Config> Behaviour<C> for HarvestBehaviour {
         let spawn = self.my_spawn.as_ref().unwrap();
 
         // find all cointainers with energy
-        let containers = game::utils::get_objects_by_prototype(prototypes::STRUCTURE_CONTAINER)
+        let containers = get_objects_by_prototype(prototypes::STRUCTURE_CONTAINER)
             .iter()
             .filter(|x| x.store().get(ResourceType::Energy).unwrap_or(0) > 20)
             .collect::<Array>();
@@ -184,8 +179,7 @@ impl<C: Config> Behaviour<C> for HarvestBehaviour {
         for creep in self.creeps.0.values() {
             if creep.store().get(ResourceType::Energy).unwrap() == 0 {
                 // harvest from containers
-                if let Some(closest) = creep.find_closest_by_path(&containers, None) {
-                    let closest = JsValue::from(closest).into();
+                if let Some(closest) = creep.find_closest_by_path(&containers, None).map(obj_from) {
                     ok_or_move_to(
                         creep.withdraw(&closest, ResourceType::Energy, None),
                         creep,
@@ -235,23 +229,6 @@ impl<C: Config> Behaviour<C> for AttackBehaviour {
     }
 }
 
-pub fn gen_parts(parts_list: &[(Part, usize)]) -> Vec<Part> {
-    parts_list
-        .iter()
-        .flat_map(|(part, n)| vec![*part; *n])
-        .collect()
-}
-
-fn ok_or_move_to(err: ReturnCode, creep: &Creep, target: &GameObject) {
-    match err {
-        ReturnCode::Ok => {}
-        ReturnCode::NotInRange => match creep.move_to(target, None) {
-            ReturnCode::Ok => {}
-            err => warn!(" error {err:?}"),
-        },
-        err => warn!("unexpected error {err:?}"),
-    }
-}
 /*
 pub trait Behaviour<C: Config>: Send + Sized + 'static {
     fn status(&self, plan: &Plan<C>) -> Option<bool>;

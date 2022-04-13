@@ -28,12 +28,12 @@ pub fn tick() {
         type Behaviour = mode::behaviour::Behaviours<Self>;
     }
     // store static plan
-    static mut PLAN: Option<dpt::Plan<mode::Config>> = None;
+    static mut PLAN: Option<dpt::Plan<Config>> = None;
     // init and run plan
     unsafe {
         match &mut PLAN {
             None => {
-                logging::init(logging::Debug);
+                logging::init(logging::Info);
                 info!("{:?}", game::arena_info());
 
                 PLAN = Some(dpt::Plan::new(
